@@ -2,6 +2,6 @@ streamlit
 faiss-cpu
 sentence-transformers
 pypdf
-langchain
 numpy
+langchain
 groq
