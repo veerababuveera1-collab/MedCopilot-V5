@@ -4,19 +4,18 @@ import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
-
 from external_research import external_research_answer
 
 # ==================== CONFIG ====================
 st.set_page_config(
-    page_title="MedCopilot V3 — Hybrid Hospital AI",
+    page_title="MedCopilot V5 — Hybrid Hospital AI",
     page_icon="🧠",
     layout="wide"
 )
 
 # ==================== UI ====================
 st.markdown("""
-# 🧠 MedCopilot V3 — Hybrid Hospital AI  
+# 🧠 MedCopilot V5 — Hybrid Hospital AI  
 ### Evidence-Based Hospital AI + Global Medical Research  
 ⚠ Research support only. Not a substitute for professional medical advice.
 """)
@@ -34,7 +33,7 @@ if pdf_files:
     st.sidebar.success("Medical Library Loaded")
 else:
     st.sidebar.warning("No Medical Library Found")
-    st.sidebar.info("External AI Mode Enabled")
+    st.sidebar.info("Global AI Mode Enabled")
 
 # ==================== Load Models ====================
 @st.cache_resource
@@ -49,16 +48,19 @@ sources = []
 
 if pdf_files:
     for file in pdf_files:
-        reader = PdfReader(os.path.join(PDF_FOLDER, file))
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text and len(text) > 200:
-                documents.append(text)
-                sources.append(f"{file} — Page {i+1}")
+        try:
+            reader = PdfReader(os.path.join(PDF_FOLDER, file))
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text and len(text) > 200:
+                    documents.append(text)
+                    sources.append(f"{file} — Page {i+1}")
+        except:
+            st.warning(f"Skipping corrupted PDF: {file}")
 
 # ==================== Build Vector DB ====================
 if documents:
-    embeddings = embedder.encode(documents)
+    embeddings = embedder.encode(documents, show_progress_bar=False)
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(np.array(embeddings))
@@ -70,40 +72,63 @@ st.markdown("## 🔬 Clinical Research Workspace")
 
 query = st.text_input("Ask a clinical research question:")
 
-# ==================== Hybrid AI ====================
-if query:
+ai_mode = st.radio(
+    "Select AI Mode:",
+    ["🏥 Hospital Evidence AI", "🌍 Global Research AI", "⚡ Hybrid AI"],
+    horizontal=True
+)
 
-    # ----------- Hospital Evidence Mode -----------
-    if documents:
+run = st.button("🧠 Run Clinical Intelligence")
 
-        q_embed = embedder.encode([query])
-        D, I = index.search(np.array(q_embed), 5)
+# ==================== Hybrid AI Engine ====================
+if run and query:
 
-        context = "\n\n".join([documents[i] for i in I[0]])
-        used_sources = [sources[i] for i in I[0]]
+    # ---------------- Hospital Evidence Mode ----------------
+    if ai_mode == "🏥 Hospital Evidence AI":
 
-        st.markdown("## 🏥 Hospital Evidence-Based Answer")
+        if not documents:
+            st.error("No Medical Library Found. Upload PDFs first.")
+        else:
+            q_embed = embedder.encode([query])
+            D, I = index.search(np.array(q_embed), 5)
 
-        st.write(context[:3000])  # preview context
+            context = "\n\n".join([documents[i] for i in I[0]])
+            used_sources = [sources[i] for i in I[0]]
 
-        st.markdown("### 📚 Evidence Sources")
-        for s in used_sources:
-            st.info(s)
+            st.markdown("## 🏥 Hospital Evidence-Based Answer")
+            st.write(context[:3000])
 
-        st.success("Mode: Hospital Evidence AI (Local Medical Library)")
+            st.markdown("### 📚 Evidence Sources")
+            for s in used_sources:
+                st.info(s)
 
-    # ----------- Global Medical AI Mode -----------
-    else:
+            st.success("Mode: Hospital Evidence AI")
+
+    # ---------------- Global Research Mode ----------------
+    elif ai_mode == "🌍 Global Research AI":
+
+        with st.spinner("🔍 Searching global medical research..."):
+            external = external_research_answer(query)
+
         st.markdown("## 🌍 Global Medical Research Answer")
+        st.write(external["answer"])
+        st.success("Mode: Global Research AI")
 
-        try:
-            with st.spinner("🔍 Searching global medical research..."):
-                external = external_research_answer(query)
+    # ---------------- Hybrid Mode ----------------
+    elif ai_mode == "⚡ Hybrid AI":
 
-            st.markdown("### 🧠 Clinical Research Answer")
-            st.write(external["answer"])
+        response_parts = []
 
-            st.success("Mode: Global Medical AI (Groq LLaMA-3.1)")
+        if documents:
+            q_embed = embedder.encode([query])
+            D, I = index.search(np.array(q_embed), 3)
+            pdf_context = "\n\n".join([documents[i] for i in I[0]])
+            response_parts.append("🏥 Hospital Evidence:\n" + pdf_context[:1500])
 
-        except Exception as e:
-            st.error(f"External AI Error: {str(e)}")
+        external = external_research_answer(query)
+        response_parts.append("🌍 Global Research:\n" + external["answer"])
+
+        st.markdown("## ⚡ Hybrid Clinical Intelligence")
+        st.write("\n\n".join(response_parts))
+
+        st.success("Mode: Hybrid AI Engine")
