@@ -117,12 +117,12 @@ if build_index_btn:
     st.session_state.index_ready = True
     st.session_state.documents = docs
     st.session_state.sources = srcs
-    st.sidebar.success("Hospital knowledge index built successfully.")
+    st.sidebar.success("✅ Hospital knowledge index built successfully.")
 
 # ================== LOAD EXISTING INDEX ==================
 if not st.session_state.index_ready:
     index, docs, srcs = load_index()
-    if index:
+    if index is not None:
         st.session_state.index_ready = True
         st.session_state.documents = docs
         st.session_state.sources = srcs
@@ -156,7 +156,7 @@ if run_btn and query:
         # ---------------- Hospital AI ----------------
         if mode == "Hospital AI":
             if not st.session_state.index_ready:
-                st.error("Hospital knowledge base not ready.")
+                st.error("❌ Hospital knowledge base not ready. Please upload PDFs and build index.")
             else:
                 q_emb = embedder.encode([query])
                 D, I = faiss.read_index(INDEX_FILE).search(np.array(q_emb), 5)
@@ -176,7 +176,7 @@ if run_btn and query:
                 ans = external_research_answer(query)
 
             st.markdown("### 🌍 Global Medical Research")
-            st.write(ans["answer"])
+            st.write(ans.get("answer", "No response"))
 
         # ---------------- Hybrid AI ----------------
         elif mode == "Hybrid AI":
@@ -196,7 +196,7 @@ if run_btn and query:
             with st.spinner("🌍 Searching global medical research..."):
                 ext = external_research_answer(query)
 
-            output += "### 🌍 Global Medical Research\n\n" + ext["answer"]
+            output += "### 🌍 Global Medical Research\n\n" + ext.get("answer", "No response")
 
             st.markdown("### 🧠 Hybrid Clinical Intelligence")
             st.write(output)
