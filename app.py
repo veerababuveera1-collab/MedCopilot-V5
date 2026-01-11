@@ -6,6 +6,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # ================= CONFIG =================
 st.set_page_config("MedCopilot Enterprise", "🧠", layout="wide")
@@ -16,18 +17,24 @@ os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
 INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
-SOURCES_FILE = os.path.join(VECTOR_FOLDER, "sources.pkl")
+CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
 
 # ================= UI =================
 st.title("🧠 MedCopilot Enterprise — Hospital AI Platform")
 st.caption("Evidence-Based Hospital AI + Global Medical Research")
 
-# ================= Load Model Once =================
+# ================= Load Embedder =================
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
+
+# ================= Chunking Engine =================
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1200,
+    chunk_overlap=200
+)
 
 # ================= Upload PDFs =================
 st.sidebar.header("📄 Medical Library")
@@ -39,11 +46,14 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 if uploaded_files:
-    for f in uploaded_files:
-        path = os.path.join(PDF_FOLDER, f.name)
-        with open(path, "wb") as out:
-            out.write(f.getbuffer())
-    st.sidebar.success("PDFs uploaded. Building index...")
+    with st.sidebar.spinner("Uploading medical PDFs..."):
+        for f in uploaded_files:
+            path = os.path.join(PDF_FOLDER, f.name)
+            with open(path, "wb") as out:
+                out.write(f.getbuffer())
+
+    st.sidebar.success("PDFs uploaded successfully!")
+    st.cache_resource.clear()
     st.rerun()
 
 # ================= Index Builder =================
@@ -51,54 +61,61 @@ def build_index():
     documents = []
     sources = []
 
-    for file in os.listdir(PDF_FOLDER):
-        if file.endswith(".pdf"):
-            try:
-                reader = PdfReader(os.path.join(PDF_FOLDER, file))
-                for i, page in enumerate(reader.pages):
-                    text = page.extract_text()
-                    if text and len(text) > 200:
-                        documents.append(text)
-                        sources.append(f"{file} — Page {i+1}")
-            except:
-                pass
+    pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
 
-    embeddings = embedder.encode(documents, show_progress_bar=False)
+    with st.spinner("🧠 Building Medical Knowledge Index..."):
+        for file in pdf_files:
+            reader = PdfReader(os.path.join(PDF_FOLDER, file))
+
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if not text:
+                    continue
+
+                chunks = text_splitter.split_text(text)
+
+                for chunk in chunks:
+                    if len(chunk) > 200:
+                        documents.append(chunk)
+                        sources.append(f"{file} — Page {i+1}")
+
+        embeddings = embedder.encode(
+            documents,
+            batch_size=32,
+            show_progress_bar=True
+        )
 
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(np.array(embeddings))
 
     faiss.write_index(index, INDEX_FILE)
-    with open(SOURCES_FILE, "wb") as f:
-        pickle.dump(sources, f)
+
+    with open(CACHE_FILE, "wb") as f:
+        pickle.dump({
+            "documents": documents,
+            "sources": sources
+        }, f)
 
     return index, documents, sources
 
 # ================= Load Cached Index =================
-if os.path.exists(INDEX_FILE) and os.path.exists(SOURCES_FILE):
-    index = faiss.read_index(INDEX_FILE)
-    with open(SOURCES_FILE, "rb") as f:
-        sources = pickle.load(f)
+@st.cache_resource
+def load_index():
+    if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
+        index = faiss.read_index(INDEX_FILE)
 
-    documents = []
-    for file in os.listdir(PDF_FOLDER):
-        if file.endswith(".pdf"):
-            try:
-                reader = PdfReader(os.path.join(PDF_FOLDER, file))
-                for page in reader.pages:
-                    text = page.extract_text()
-                    if text and len(text) > 200:
-                        documents.append(text)
-            except:
-                pass
-else:
-    if os.listdir(PDF_FOLDER):
-        index, documents, sources = build_index()
+        with open(CACHE_FILE, "rb") as f:
+            data = pickle.load(f)
+
+        return index, data["documents"], data["sources"]
+
+    elif os.listdir(PDF_FOLDER):
+        return build_index()
     else:
-        index = None
-        documents = []
-        sources = []
+        return None, [], []
+
+index, documents, sources = load_index()
 
 # ================= Workspace =================
 st.subheader("🔬 Clinical Research Workspace")
@@ -118,11 +135,20 @@ if run and query:
             q_emb = embedder.encode([query])
             D, I = index.search(np.array(q_emb), 5)
 
-            context = "\n\n".join([documents[i] for i in I[0]])
-            st.write(context[:3000])
+            results = []
+            for i in I[0]:
+                results.append(documents[i])
+
+            context = "\n\n".join(results)
+
+            st.subheader("🏥 Hospital Evidence")
+            st.write(context[:3500])
 
     elif mode == "Global AI":
-        ans = external_research_answer(query)
+        with st.spinner("🌍 Searching global medical research..."):
+            ans = external_research_answer(query)
+
+        st.subheader("🌍 Global Research")
         st.write(ans["answer"])
 
     elif mode == "Hybrid AI":
@@ -131,10 +157,18 @@ if run and query:
         if index:
             q_emb = embedder.encode([query])
             D, I = index.search(np.array(q_emb), 3)
-            context = "\n\n".join([documents[i] for i in I[0]])
-            result += "🏥 Hospital Evidence:\n" + context[:1500] + "\n\n"
 
-        ext = external_research_answer(query)
-        result += "🌍 Global Research:\n" + ext["answer"]
+            hospital_results = []
+            for i in I[0]:
+                hospital_results.append(documents[i])
 
+            hospital_context = "\n\n".join(hospital_results)
+            result += "🏥 Hospital Evidence:\n\n" + hospital_context[:1800] + "\n\n"
+
+        with st.spinner("🌍 Searching global medical research..."):
+            ext = external_research_answer(query)
+
+        result += "🌍 Global Research:\n\n" + ext["answer"]
+
+        st.subheader("🧠 Hybrid Clinical Intelligence")
         st.write(result)
