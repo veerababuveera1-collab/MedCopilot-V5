@@ -13,52 +13,70 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==================== UI ====================
+PDF_FOLDER = "medical_library"
+os.makedirs(PDF_FOLDER, exist_ok=True)
+
+# ==================== HEADER ====================
 st.markdown("""
 # 🧠 MedCopilot V5 — Hybrid Hospital AI  
 ### Evidence-Based Hospital AI + Global Medical Research  
 ⚠ Research support only. Not a substitute for professional medical advice.
 """)
 
-# ==================== Sidebar ====================
+# ==================== SIDEBAR ====================
 st.sidebar.title("🏥 MedCopilot Status")
 
-PDF_FOLDER = "medical_library"
-pdf_files = []
-
-if os.path.exists(PDF_FOLDER):
-    pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
+pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
 
 if pdf_files:
-    st.sidebar.success("Medical Library Loaded")
+    st.sidebar.success(f"Medical Library Loaded ({len(pdf_files)} PDFs)")
 else:
     st.sidebar.warning("No Medical Library Found")
     st.sidebar.info("Global AI Mode Enabled")
 
-# ==================== Load Models ====================
+# ==================== PDF UPLOAD UI ====================
+st.sidebar.markdown("## 📄 Upload Medical PDFs")
+
+uploaded_files = st.sidebar.file_uploader(
+    "Drag & Drop Medical PDFs",
+    type=["pdf"],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        save_path = os.path.join(PDF_FOLDER, uploaded_file.name)
+        with open(save_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+    st.sidebar.success("PDFs uploaded successfully. Reloading library...")
+    st.experimental_rerun()
+
+# ==================== LOAD EMBEDDING MODEL ====================
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 embedder = load_embedder()
 
-# ==================== Load PDFs ====================
+# ==================== LOAD PDFs ====================
 documents = []
 sources = []
 
 if pdf_files:
     for file in pdf_files:
+        file_path = os.path.join(PDF_FOLDER, file)
         try:
-            reader = PdfReader(os.path.join(PDF_FOLDER, file))
+            reader = PdfReader(file_path)
             for i, page in enumerate(reader.pages):
                 text = page.extract_text()
                 if text and len(text) > 200:
                     documents.append(text)
                     sources.append(f"{file} — Page {i+1}")
         except:
-            st.warning(f"Skipping corrupted PDF: {file}")
+            st.warning(f"⚠ Skipping corrupted PDF: {file}")
 
-# ==================== Build Vector DB ====================
+# ==================== VECTOR DATABASE ====================
 if documents:
     embeddings = embedder.encode(documents, show_progress_bar=False)
     dim = embeddings.shape[1]
@@ -67,7 +85,7 @@ if documents:
 else:
     index = None
 
-# ==================== Workspace ====================
+# ==================== WORKSPACE ====================
 st.markdown("## 🔬 Clinical Research Workspace")
 
 query = st.text_input("Ask a clinical research question:")
@@ -80,7 +98,7 @@ ai_mode = st.radio(
 
 run = st.button("🧠 Run Clinical Intelligence")
 
-# ==================== Hybrid AI Engine ====================
+# ==================== AI ENGINE ====================
 if run and query:
 
     # ---------------- Hospital Evidence Mode ----------------
