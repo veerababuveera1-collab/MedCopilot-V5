@@ -50,7 +50,7 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 if uploaded_files:
-    with st.sidebar.spinner("Uploading medical PDFs..."):
+    with st.spinner("Uploading medical PDFs..."):
         for f in uploaded_files:
             path = os.path.join(PDF_FOLDER, f.name)
             with open(path, "wb") as out:
