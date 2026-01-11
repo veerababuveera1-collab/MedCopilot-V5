@@ -50,7 +50,7 @@ if uploaded_files:
             f.write(uploaded_file.getbuffer())
 
     st.sidebar.success("PDFs uploaded successfully. Reloading library...")
-    st.experimental_rerun()
+    st.rerun()   # ✅ correct function for latest Streamlit
 
 # ==================== LOAD EMBEDDING MODEL ====================
 @st.cache_resource
@@ -73,8 +73,8 @@ if pdf_files:
                 if text and len(text) > 200:
                     documents.append(text)
                     sources.append(f"{file} — Page {i+1}")
-        except:
-            st.warning(f"⚠ Skipping corrupted PDF: {file}")
+        except Exception as e:
+            st.sidebar.warning(f"⚠ Skipping corrupted PDF: {file}")
 
 # ==================== VECTOR DATABASE ====================
 if documents:
