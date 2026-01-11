@@ -9,7 +9,7 @@ from external_research import external_research_answer
 
 # ================== PAGE CONFIG ==================
 st.set_page_config(
-    page_title="MedCopilot Enterprise — Hospital AI",
+    page_title="ĀROGYABODHA AI — Hospital Clinical Intelligence",
     page_icon="🧠",
     layout="wide"
 )
@@ -119,11 +119,11 @@ def load_embedder():
 embedder = load_embedder()
 
 # ================== HEADER ==================
-st.markdown('<div class="main-title">MedCopilot Enterprise</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Hospital AI Platform • Clinical Intelligence • Global Medical Research</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Hospital Clinical Intelligence Platform • Evidence-Based Medicine • Global Research</div>', unsafe_allow_html=True)
 
 # ================== SIDEBAR ==================
-st.sidebar.title("📁 Medical Knowledge Base")
+st.sidebar.title("📁 ĀROGYABODHA Medical Knowledge Base")
 st.sidebar.markdown('<div class="upload-box">Upload hospital medical PDFs to build AI brain</div>', unsafe_allow_html=True)
 
 uploaded_files = st.sidebar.file_uploader(
@@ -303,7 +303,7 @@ if run_btn and query:
             st.subheader("🏥 Hospital Clinical Intelligence")
             st.write(clinical_answer)
 
-            st.download_button("📥 Download Clinical Report", clinical_answer, file_name="clinical_report.txt")
+            st.download_button("📥 Download Clinical Report", clinical_answer, file_name="arogyabodha_clinical_report.txt")
 
             st.subheader("📚 Evidence Sources")
             for i in I[0]:
@@ -338,7 +338,7 @@ if run_btn and query:
         st.subheader("🧠 Hybrid Clinical Decision Intelligence")
         st.write(output)
 
-        st.download_button("📥 Download Hybrid Report", output, file_name="hybrid_clinical_report.txt")
+        st.download_button("📥 Download Hybrid Report", output, file_name="arogyabodha_hybrid_report.txt")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -350,4 +350,4 @@ for q in st.session_state.query_history[-5:]:
 
 # ================== FOOTER ==================
 st.divider()
-st.caption("MedCopilot Enterprise © Hospital AI Platform | Clinical Decision Intelligence")
+st.caption("ĀROGYABODHA AI © Hospital Clinical Intelligence Platform | Evidence-Based Decision Support")
