@@ -33,6 +33,9 @@ if "documents" not in st.session_state:
 if "sources" not in st.session_state:
     st.session_state.sources = []
 
+if "query_history" not in st.session_state:
+    st.session_state.query_history = []
+
 # ================== MODEL ==================
 @st.cache_resource
 def load_embedder():
@@ -72,6 +75,10 @@ if st.session_state.index_ready:
 else:
     st.sidebar.warning("🟡 Knowledge Index Not Built")
 
+# ---- Auto Rebuild Warning ----
+if uploaded_files and st.session_state.index_ready:
+    st.sidebar.warning("⚠️ New PDFs uploaded. Please rebuild knowledge index.")
+
 # ================== PDF UPLOAD ==================
 if uploaded_files:
     for f in uploaded_files:
@@ -81,7 +88,7 @@ if uploaded_files:
 
     st.sidebar.success(f"✅ {len(uploaded_files)} PDF(s) uploaded successfully.")
 
-# ================== INDEX BUILDER (Fast + Safe) ==================
+# ================== INDEX BUILDER ==================
 def build_index():
     documents = []
     sources = []
@@ -101,7 +108,7 @@ def build_index():
                 reader = PdfReader(file_path)
 
                 for i, page in enumerate(reader.pages):
-                    if i > 200:  # safety limit
+                    if i > 200:
                         break
 
                     try:
@@ -175,7 +182,7 @@ if not st.session_state.index_ready:
         st.session_state.documents = docs
         st.session_state.sources = srcs
 
-# ================== CLINICAL REASONING ENGINE ==================
+# ================== CLINICAL REASONING ==================
 def hospital_clinical_reasoning(query, context):
     prompt = f"""
 You are a senior hospital clinical decision support AI.
@@ -208,6 +215,11 @@ Rules:
 st.divider()
 st.subheader("🔬 Clinical Intelligence Dashboard")
 
+st.markdown("### 💡 Example Clinical Questions")
+st.write("- What are the causes of hypertension?")
+st.write("- Latest treatment protocol for Type 2 Diabetes")
+st.write("- ICU sepsis management guidelines")
+
 col1, col2 = st.columns([3, 1])
 
 with col2:
@@ -227,6 +239,8 @@ result_panel = st.container()
 # ================== AI ENGINE ==================
 if run_btn and query:
 
+    st.session_state.query_history.append(query)
+
     with result_panel:
         st.subheader("📊 Clinical Intelligence Result")
 
@@ -238,17 +252,20 @@ if run_btn and query:
                 q_emb = embedder.encode([query])
                 D, I = faiss.read_index(INDEX_FILE).search(np.array(q_emb), 5)
 
-                results = []
-                for i in I[0]:
-                    results.append(st.session_state.documents[i])
-
+                results = [st.session_state.documents[i] for i in I[0]]
                 context = "\n\n".join(results)
 
-                with st.spinner("🧠 Generating clinical intelligence from hospital protocols..."):
+                with st.spinner("🧠 Generating clinical intelligence..."):
                     clinical_answer = hospital_clinical_reasoning(query, context)
 
                 st.markdown("### 🧠 Hospital Clinical Intelligence")
                 st.write(clinical_answer)
+
+                st.download_button(
+                    "📥 Download Clinical Report",
+                    clinical_answer,
+                    file_name="clinical_report.txt"
+                )
 
                 st.markdown("### 📚 Evidence Sources")
                 for i in I[0]:
@@ -266,15 +283,11 @@ if run_btn and query:
         elif mode == "Hybrid AI":
             output = ""
 
-            # Hospital Evidence + Clinical Reasoning
             if st.session_state.index_ready:
                 q_emb = embedder.encode([query])
                 D, I = faiss.read_index(INDEX_FILE).search(np.array(q_emb), 3)
 
-                hospital_results = []
-                for i in I[0]:
-                    hospital_results.append(st.session_state.documents[i])
-
+                hospital_results = [st.session_state.documents[i] for i in I[0]]
                 hospital_context = "\n\n".join(hospital_results)
 
                 with st.spinner("🧠 Generating hospital clinical intelligence..."):
@@ -282,7 +295,6 @@ if run_btn and query:
 
                 output += "### 🏥 Hospital Clinical Intelligence\n\n" + hospital_ai + "\n\n"
 
-            # Global Research AI
             with st.spinner("🌍 Searching global medical research..."):
                 ext = external_research_answer(query)
 
@@ -290,6 +302,26 @@ if run_btn and query:
 
             st.markdown("### 🧠 Hybrid Clinical Decision Intelligence")
             st.write(output)
+
+            st.download_button(
+                "📥 Download Hybrid Report",
+                output,
+                file_name="hybrid_clinical_report.txt"
+            )
+
+# ================== SYSTEM HEALTH ==================
+st.sidebar.divider()
+st.sidebar.subheader("⚙️ System Health")
+st.sidebar.write("Embedding Model: MiniLM-L6-v2")
+st.sidebar.write("Vector DB: FAISS")
+st.sidebar.write("Global AI: Groq LLaMA")
+st.sidebar.write("Indexed Pages:", len(st.session_state.documents))
+
+# ================== QUERY HISTORY ==================
+st.sidebar.divider()
+st.sidebar.subheader("🕒 Recent Queries")
+for q in st.session_state.query_history[-5:]:
+    st.sidebar.write("•", q)
 
 # ================== FOOTER ==================
 st.divider()
