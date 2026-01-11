@@ -13,9 +13,9 @@ def external_research_answer(query):
         client = Groq(api_key=api_key)
 
         response = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.1-70b-versatile",   # ✅ Supported model
             messages=[
-                {"role": "system", "content": "You are a medical research assistant."},
+                {"role": "system", "content": "You are a medical research and clinical decision support assistant."},
                 {"role": "user", "content": query}
             ],
             temperature=0.2
