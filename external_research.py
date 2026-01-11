@@ -1,17 +1,16 @@
-from groq import Groq
 import os
+from groq import Groq
 
-client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def external_research_answer(query):
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama3-70b-8192",
         messages=[
-            {"role": "system", "content": "You are a medical research AI. Provide evidence-based medical information."},
+            {"role": "system", "content": "You are a medical research assistant."},
             {"role": "user", "content": query}
         ],
-        temperature=0.3,
-        max_tokens=800
+        temperature=0.2
     )
 
     return {
