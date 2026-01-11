@@ -12,17 +12,36 @@ def external_research_answer(query):
     try:
         client = Groq(api_key=api_key)
 
-        response = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",   # ✅ Supported model
-            messages=[
-                {"role": "system", "content": "You are a medical research and clinical decision support assistant."},
-                {"role": "user", "content": query}
-            ],
-            temperature=0.2
-        )
+        # Try latest supported models in order
+        models = [
+            "llama-3.3-70b-versatile",   # newest
+            "llama-3.2-90b-text-preview",
+            "llama-3.1-8b-instant"
+        ]
+
+        last_error = None
+
+        for model in models:
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a medical research and clinical decision support assistant."},
+                        {"role": "user", "content": query}
+                    ],
+                    temperature=0.2
+                )
+
+                return {
+                    "answer": response.choices[0].message.content
+                }
+
+            except Exception as e:
+                last_error = str(e)
+                continue
 
         return {
-            "answer": response.choices[0].message.content
+            "answer": f"❌ All Groq models failed. Last error: {last_error}"
         }
 
     except Exception as e:
