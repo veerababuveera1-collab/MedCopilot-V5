@@ -45,7 +45,8 @@ st.title("🧠 MedCopilot Enterprise — Hospital AI Platform")
 st.caption("Clinical Evidence • Medical Intelligence • Global Research")
 
 # ================== SIDEBAR ==================
-st.sidebar.header("📁 Medical Knowledge Base")
+st.sidebar.title("📁 Medical Knowledge Base")
+st.sidebar.markdown("Upload hospital medical PDFs and build AI knowledge index.")
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload Medical PDFs",
@@ -53,7 +54,23 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
-build_index_btn = st.sidebar.button("🔄 Build Knowledge Index")
+st.sidebar.divider()
+
+build_index_btn = st.sidebar.button(
+    "🔄 Build Knowledge Index",
+    use_container_width=True
+)
+
+# ---- PDF Count ----
+pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
+st.sidebar.divider()
+st.sidebar.info(f"📄 Total PDFs in Library: {len(pdf_files)}")
+
+# ---- Index Status ----
+if st.session_state.index_ready:
+    st.sidebar.success("🟢 Knowledge Index Ready")
+else:
+    st.sidebar.warning("🟡 Knowledge Index Not Built")
 
 # ================== PDF UPLOAD ==================
 if uploaded_files:
@@ -62,28 +79,55 @@ if uploaded_files:
         with open(path, "wb") as out:
             out.write(f.getbuffer())
 
-    st.sidebar.success("PDFs uploaded successfully.")
+    st.sidebar.success(f"✅ {len(uploaded_files)} PDF(s) uploaded successfully.")
 
-# ================== INDEX BUILDER ==================
+# ================== INDEX BUILDER (Fast + Safe) ==================
 def build_index():
     documents = []
     sources = []
+    failed_files = []
 
     pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
 
+    progress = st.progress(0)
+    total = max(len(pdf_files), 1)
+    count = 0
+
     with st.spinner("🧠 Building hospital knowledge index..."):
         for file in pdf_files:
-            reader = PdfReader(os.path.join(PDF_FOLDER, file))
+            file_path = os.path.join(PDF_FOLDER, file)
 
-            for i, page in enumerate(reader.pages):
-                text = page.extract_text()
-                if text and len(text) > 300:
-                    documents.append(text)
-                    sources.append(f"{file} — Page {i+1}")
+            try:
+                reader = PdfReader(file_path)
+
+                for i, page in enumerate(reader.pages):
+                    if i > 200:  # safety limit
+                        break
+
+                    try:
+                        text = page.extract_text()
+                        if not text or len(text.strip()) < 100:
+                            continue
+
+                        documents.append(text)
+                        sources.append(f"{file} — Page {i+1}")
+                    except:
+                        continue
+
+            except:
+                failed_files.append(file)
+                continue
+
+            count += 1
+            progress.progress(count / total)
+
+        if not documents:
+            st.error("❌ No valid text could be extracted from uploaded PDFs.")
+            return None, [], []
 
         embeddings = embedder.encode(
             documents,
-            batch_size=32,
+            batch_size=16,
             show_progress_bar=False
         )
 
@@ -98,6 +142,9 @@ def build_index():
             "documents": documents,
             "sources": sources
         }, f)
+
+    if failed_files:
+        st.warning(f"⚠️ Skipped corrupted PDFs: {', '.join(failed_files)}")
 
     return index, documents, sources
 
@@ -114,10 +161,11 @@ def load_index():
 # ================== BUILD INDEX BUTTON ==================
 if build_index_btn:
     index, docs, srcs = build_index()
-    st.session_state.index_ready = True
-    st.session_state.documents = docs
-    st.session_state.sources = srcs
-    st.sidebar.success("✅ Hospital knowledge index built successfully.")
+    if index is not None:
+        st.session_state.index_ready = True
+        st.session_state.documents = docs
+        st.session_state.sources = srcs
+        st.sidebar.success("✅ Hospital knowledge index built successfully.")
 
 # ================== LOAD EXISTING INDEX ==================
 if not st.session_state.index_ready:
@@ -126,6 +174,35 @@ if not st.session_state.index_ready:
         st.session_state.index_ready = True
         st.session_state.documents = docs
         st.session_state.sources = srcs
+
+# ================== CLINICAL REASONING ENGINE ==================
+def hospital_clinical_reasoning(query, context):
+    prompt = f"""
+You are a senior hospital clinical decision support AI.
+
+Using ONLY the hospital evidence below, answer the doctor's question
+in a structured medical format with:
+
+- Diagnosis Summary
+- Treatment Protocol
+- Drug Dosage (if available)
+- Monitoring Plan
+- Follow-up Plan
+
+Doctor Question:
+{query}
+
+Hospital Evidence:
+{context}
+
+Rules:
+- Use only hospital evidence
+- Do not hallucinate
+- Be concise and clinical
+"""
+
+    result = external_research_answer(prompt)
+    return result.get("answer", "No clinical response generated.")
 
 # ================== MAIN DASHBOARD ==================
 st.divider()
@@ -167,8 +244,15 @@ if run_btn and query:
 
                 context = "\n\n".join(results)
 
-                st.markdown("### 🏥 Hospital Evidence")
-                st.write(context[:3500])
+                with st.spinner("🧠 Generating clinical intelligence from hospital protocols..."):
+                    clinical_answer = hospital_clinical_reasoning(query, context)
+
+                st.markdown("### 🧠 Hospital Clinical Intelligence")
+                st.write(clinical_answer)
+
+                st.markdown("### 📚 Evidence Sources")
+                for i in I[0]:
+                    st.info(st.session_state.sources[i])
 
         # ---------------- Global AI ----------------
         elif mode == "Global AI":
@@ -182,6 +266,7 @@ if run_btn and query:
         elif mode == "Hybrid AI":
             output = ""
 
+            # Hospital Evidence + Clinical Reasoning
             if st.session_state.index_ready:
                 q_emb = embedder.encode([query])
                 D, I = faiss.read_index(INDEX_FILE).search(np.array(q_emb), 3)
@@ -191,14 +276,19 @@ if run_btn and query:
                     hospital_results.append(st.session_state.documents[i])
 
                 hospital_context = "\n\n".join(hospital_results)
-                output += "### 🏥 Hospital Evidence\n\n" + hospital_context[:1800] + "\n\n"
 
+                with st.spinner("🧠 Generating hospital clinical intelligence..."):
+                    hospital_ai = hospital_clinical_reasoning(query, hospital_context)
+
+                output += "### 🏥 Hospital Clinical Intelligence\n\n" + hospital_ai + "\n\n"
+
+            # Global Research AI
             with st.spinner("🌍 Searching global medical research..."):
                 ext = external_research_answer(query)
 
             output += "### 🌍 Global Medical Research\n\n" + ext.get("answer", "No response")
 
-            st.markdown("### 🧠 Hybrid Clinical Intelligence")
+            st.markdown("### 🧠 Hybrid Clinical Decision Intelligence")
             st.write(output)
 
 # ================== FOOTER ==================
