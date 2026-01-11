@@ -6,7 +6,6 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 # ================= CONFIG =================
 st.set_page_config("MedCopilot Enterprise", "🧠", layout="wide")
@@ -30,11 +29,16 @@ def load_embedder():
 
 embedder = load_embedder()
 
-# ================= Chunking Engine =================
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1200,
-    chunk_overlap=200
-)
+# ================= Native Fast Text Splitter =================
+def split_text(text, chunk_size=1200, overlap=200):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end]
+        chunks.append(chunk)
+        start = end - overlap
+    return chunks
 
 # ================= Upload PDFs =================
 st.sidebar.header("📄 Medical Library")
@@ -72,7 +76,7 @@ def build_index():
                 if not text:
                     continue
 
-                chunks = text_splitter.split_text(text)
+                chunks = split_text(text)
 
                 for chunk in chunks:
                     if len(chunk) > 200:
