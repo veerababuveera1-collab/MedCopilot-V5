@@ -1,353 +1,344 @@
 import streamlit as st
-import os
-import pickle
+import os, json, pickle, datetime
 import numpy as np
 import faiss
+import pandas as pd
 from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from external_research import external_research_answer
 
-# ================== PAGE CONFIG ==================
+# ======================================================
+# PAGE CONFIG
+# ======================================================
 st.set_page_config(
-    page_title="ĀROGYABODHA AI — Hospital Clinical Intelligence",
+    page_title="ĀROGYABODHA AI — Clinical Research Copilot",
     page_icon="🧠",
     layout="wide"
 )
 
-# ================== ENTERPRISE UI THEME ==================
-st.markdown("""
-<style>
+# ======================================================
+# DISCLAIMER (TOP – MANDATORY)
+# ======================================================
+st.info(
+    "ℹ️ ĀROGYABODHA AI is a clinical research decision-support system only. "
+    "It does NOT provide diagnosis or treatment. "
+    "Final clinical decisions must be made by licensed medical professionals."
+)
 
-body {
-    background: linear-gradient(135deg, #f4f9ff, #eaf2ff);
-}
-
-.main-title {
-    font-size: 46px;
-    font-weight: 800;
-    background: linear-gradient(90deg, #2563eb, #06b6d4);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.subtitle {
-    color: #64748b;
-    font-size: 18px;
-    margin-bottom: 25px;
-}
-
-.card {
-    background: rgba(255,255,255,0.85);
-    border-radius: 18px;
-    padding: 22px;
-    box-shadow: 0px 10px 30px rgba(0,0,0,0.08);
-    margin-bottom: 20px;
-}
-
-.metric {
-    font-size: 34px;
-    font-weight: 700;
-    color: #2563eb;
-}
-
-.label {
-    color: #64748b;
-    font-size: 14px;
-}
-
-.stButton>button {
-    background: linear-gradient(90deg, #2563eb, #06b6d4);
-    color: white;
-    border-radius: 12px;
-    padding: 12px 20px;
-    font-weight: 600;
-    border: none;
-}
-
-.stButton>button:hover {
-    transform: scale(1.02);
-    background: linear-gradient(90deg, #1d4ed8, #0891b2);
-}
-
-.upload-box {
-    border: 2px dashed #2563eb;
-    padding: 25px;
-    border-radius: 14px;
-    background: rgba(37,99,235,0.05);
-    text-align: center;
-    font-weight: 600;
-    color: #2563eb;
-}
-
-.result-box {
-    background: rgba(255,255,255,0.95);
-    padding: 25px;
-    border-radius: 16px;
-    box-shadow: 0px 8px 20px rgba(0,0,0,0.07);
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ================== STORAGE ==================
+# ======================================================
+# STORAGE
+# ======================================================
 PDF_FOLDER = "medical_library"
 VECTOR_FOLDER = "vector_cache"
-INDEX_FILE = os.path.join(VECTOR_FOLDER, "index.faiss")
-CACHE_FILE = os.path.join(VECTOR_FOLDER, "cache.pkl")
+INDEX_FILE = f"{VECTOR_FOLDER}/index.faiss"
+CACHE_FILE = f"{VECTOR_FOLDER}/cache.pkl"
+ANALYTICS_FILE = "analytics_log.json"
+FDA_DB = "fda_registry.json"
 
 os.makedirs(PDF_FOLDER, exist_ok=True)
 os.makedirs(VECTOR_FOLDER, exist_ok=True)
 
-# ================== SESSION ==================
-if "index_ready" not in st.session_state:
-    st.session_state.index_ready = False
+# ======================================================
+# SESSION STATE
+# ======================================================
+defaults = {
+    "index": None,
+    "documents": [],
+    "sources": [],
+    "index_ready": False,
+    "show_help": False,
+    "role": "Doctor"
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "documents" not in st.session_state:
-    st.session_state.documents = []
+# ======================================================
+# HEADER
+# ======================================================
+c1, c2, c3 = st.columns([6,1,1])
+with c1:
+    st.markdown("## 🧠 ĀROGYABODHA AI")
+    st.caption("Evidence-Locked • Semantic-Validated • Clinical Research Copilot")
+with c2:
+    if st.button("❓ Help"):
+        st.session_state.show_help = not st.session_state.show_help
+with c3:
+    st.session_state.role = st.selectbox("Role", ["Doctor", "Researcher"])
 
-if "sources" not in st.session_state:
-    st.session_state.sources = []
+# ======================================================
+# IMPROVED HELP PANEL (ENGLISH ONLY)
+# ======================================================
+if st.session_state.show_help:
+    st.markdown("---")
+    st.markdown("""
+### ℹ️ How ĀROGYABODHA AI Works
 
-if "query_history" not in st.session_state:
-    st.session_state.query_history = []
+#### 🔍 AI MODES
+**🏥 Hospital AI**
+- Uses ONLY hospital-uploaded PDFs  
+- No internet or external knowledge  
+- If evidence is insufficient → answer is blocked  
 
-# ================== MODEL ==================
+**🌍 Global AI**
+- Uses PubMed and global medical research  
+- Suitable for latest trials and new treatments  
+
+**🔀 Hybrid AI**
+- Compares hospital evidence with global research  
+
+---
+
+#### 🧠 SAFETY & VALIDATION
+- Semantic validation checks **meaning**, not keywords  
+- Strong evidence → confident summary  
+- Partial evidence → cautious interpretation  
+- No evidence → system refuses to answer  
+
+---
+
+#### 👤 ROLE-BASED GUIDANCE
+**👨‍⚕️ Doctor**
+- Short, conservative summaries  
+- Safety-first interpretation  
+
+**🧪 Researcher**
+- Detailed comparisons  
+- Trial outcomes and study-level insights  
+
+---
+
+#### 🧪 Example
+Query: *“Glioblastoma treatments for patients over 60”*  
+- Hospital AI → Hospital protocol evidence  
+- Global AI → Latest trials  
+- Hybrid AI → Side-by-side comparison  
+""")
+    st.markdown("---")
+
+# ======================================================
+# MODEL
+# ======================================================
 @st.cache_resource
 def load_embedder():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 embedder = load_embedder()
 
-# ================== HEADER ==================
-st.markdown('<div class="main-title">ĀROGYABODHA AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Hospital Clinical Intelligence Platform • Evidence-Based Medicine • Global Research</div>', unsafe_allow_html=True)
+# ======================================================
+# FDA REGISTRY
+# ======================================================
+if not os.path.exists(FDA_DB):
+    json.dump({
+        "temozolomide": "FDA Approved",
+        "bevacizumab": "FDA Approved",
+        "car-t": "Experimental / Trial Only"
+    }, open(FDA_DB, "w"))
 
-# ================== SIDEBAR ==================
-st.sidebar.title("📁 ĀROGYABODHA Medical Knowledge Base")
-st.sidebar.markdown('<div class="upload-box">Upload hospital medical PDFs to build AI brain</div>', unsafe_allow_html=True)
+FDA_REGISTRY = json.load(open(FDA_DB))
 
-uploaded_files = st.sidebar.file_uploader(
-    "Upload Medical PDFs",
-    type=["pdf"],
-    accept_multiple_files=True
-)
+# ======================================================
+# HELPERS
+# ======================================================
+def log_query(query, mode):
+    logs = []
+    if os.path.exists(ANALYTICS_FILE):
+        logs = json.load(open(ANALYTICS_FILE))
+    logs.append({
+        "query": query,
+        "mode": mode,
+        "time": str(datetime.datetime.now())
+    })
+    json.dump(logs, open(ANALYTICS_FILE, "w"), indent=2)
 
-build_index_btn = st.sidebar.button("🔄 Build Knowledge Index", use_container_width=True)
+def semantic_similarity(a, b):
+    ea = embedder.encode([a])[0]
+    eb = embedder.encode([b])[0]
+    return float(np.dot(ea, eb) / (np.linalg.norm(ea) * np.linalg.norm(eb)))
 
-pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-st.sidebar.info(f"📄 Total PDFs in Library: {len(pdf_files)}")
+def semantic_evidence_level(answer, context):
+    sim = semantic_similarity(answer, context)
+    if sim >= 0.55:
+        return "STRONG", int(sim * 100)
+    elif sim >= 0.25:
+        return "PARTIAL", int(sim * 100)
+    else:
+        return "NONE", 0
 
-if st.session_state.index_ready:
-    st.sidebar.success("🟢 Knowledge Index Ready")
-else:
-    st.sidebar.warning("🟡 Knowledge Index Not Built")
+def confidence_score(answer, n_sources):
+    score = 60
+    if n_sources >= 3: score += 15
+    if "fda" in answer.lower(): score += 10
+    if any(x in answer.lower() for x in ["survival", "mortality", "outcome"]):
+        score += 10
+    return min(score, 95)
 
-# ================== PDF UPLOAD ==================
-if uploaded_files:
-    for f in uploaded_files:
-        path = os.path.join(PDF_FOLDER, f.name)
-        with open(path, "wb") as out:
-            out.write(f.getbuffer())
-    st.sidebar.success(f"✅ {len(uploaded_files)} PDF(s) uploaded successfully.")
+def extract_outcomes(text):
+    rows = []
+    for d, s in FDA_REGISTRY.items():
+        if d in text.lower():
+            rows.append({"Treatment": d.title(), "FDA Status": s})
+    return pd.DataFrame(rows)
 
-# ================== INDEX BUILDER ==================
-def build_index():
-    documents = []
-    sources = []
+def generate_report(query, mode, answer, conf, coverage, sources):
+    rep = f"""ĀROGYABODHA AI – Clinical Research Report
+------------------------------------------------
+Query: {query}
+Mode: {mode}
+Confidence: {conf}%
+Evidence Coverage: {coverage}%
 
-    pdf_files = [f for f in os.listdir(PDF_FOLDER) if f.endswith(".pdf")]
-    progress = st.progress(0)
-    total = max(len(pdf_files), 1)
+Answer:
+{answer}
 
-    with st.spinner("🧠 Building hospital knowledge index..."):
-        for count, file in enumerate(pdf_files):
-            file_path = os.path.join(PDF_FOLDER, file)
-            reader = PdfReader(file_path)
+Sources:
+"""
+    for s in sources:
+        rep += f"- {s}\n"
+    return rep
 
-            for i, page in enumerate(reader.pages[:200]):
-                text = page.extract_text()
-                if text and len(text.strip()) > 100:
-                    documents.append(text)
-                    sources.append(f"{file} — Page {i+1}")
-
-            progress.progress((count + 1) / total)
-
-    embeddings = embedder.encode(documents, batch_size=16, show_progress_bar=False)
-    dim = embeddings.shape[1]
-
-    index = faiss.IndexFlatL2(dim)
-    index.add(np.array(embeddings))
-    faiss.write_index(index, INDEX_FILE)
-
-    with open(CACHE_FILE, "wb") as f:
-        pickle.dump({"documents": documents, "sources": sources}, f)
-
-    return index, documents, sources
-
-# ================== LOAD INDEX ==================
-@st.cache_resource
-def load_index():
-    if os.path.exists(INDEX_FILE) and os.path.exists(CACHE_FILE):
-        index = faiss.read_index(INDEX_FILE)
-        with open(CACHE_FILE, "rb") as f:
-            data = pickle.load(f)
-        return index, data["documents"], data["sources"]
-    return None, [], []
-
-if build_index_btn:
-    index, docs, srcs = build_index()
-    st.session_state.index_ready = True
-    st.session_state.documents = docs
-    st.session_state.sources = srcs
-    st.sidebar.success("✅ Hospital knowledge index built successfully.")
-
-if not st.session_state.index_ready:
-    index, docs, srcs = load_index()
-    if index is not None:
-        st.session_state.index_ready = True
-        st.session_state.documents = docs
-        st.session_state.sources = srcs
-
-# ================== DASHBOARD METRICS ==================
-colA, colB, colC, colD = st.columns(4)
-
-with colA:
-    st.markdown(f"""
-    <div class="card">
-        <div class="metric">{len(st.session_state.documents)}</div>
-        <div class="label">Hospital Evidence Pages</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with colB:
-    st.markdown("""
-    <div class="card">
-        <div class="metric">FAISS</div>
-        <div class="label">Vector Intelligence Engine</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with colC:
-    st.markdown("""
-    <div class="card">
-        <div class="metric">MiniLM</div>
-        <div class="label">Medical Embedding Model</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with colD:
-    st.markdown("""
-    <div class="card">
-        <div class="metric">LLaMA</div>
-        <div class="label">Clinical Reasoning AI</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ================== CLINICAL QUERY ==================
-st.markdown("### 🧠 Clinical Intelligence Assistant")
-
-query = st.text_input("Ask a clinical research or decision-support question", placeholder="Eg: Latest ICU sepsis management protocol")
-
-mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
-
-run_btn = st.button("🚀 Run Clinical Intelligence", use_container_width=True)
-
-# ================== CLINICAL REASONING ==================
-def hospital_clinical_reasoning(query, context):
+# ======================================================
+# HOSPITAL AI (EVIDENCE-LOCKED)
+# ======================================================
+def hospital_answer(query, context):
     prompt = f"""
-You are a senior hospital clinical decision support AI.
+You are a Hospital Clinical Decision Support AI.
 
-Using ONLY the hospital evidence below, answer the doctor's question
-in a structured medical format with:
-
-- Diagnosis Summary
-- Treatment Protocol
-- Drug Dosage (if available)
-- Monitoring Plan
-- Follow-up Plan
-
-Doctor Question:
-{query}
+RULES:
+- Use ONLY the hospital evidence below
+- Do NOT use external knowledge
+- Do NOT hallucinate
+- If evidence is insufficient, say so clearly
 
 Hospital Evidence:
 {context}
 
-Rules:
-- Use only hospital evidence
-- Do not hallucinate
-- Be concise and clinical
+Doctor Query:
+{query}
 """
-    result = external_research_answer(prompt)
-    return result.get("answer", "No clinical response generated.")
+    return external_research_answer(prompt).get("answer", "")
 
-# ================== AI ENGINE ==================
-if run_btn and query:
-    st.session_state.query_history.append(query)
+# ======================================================
+# INDEX BUILD / LOAD
+# ======================================================
+def build_index():
+    docs, srcs = [], []
+    for pdf in os.listdir(PDF_FOLDER):
+        if pdf.endswith(".pdf"):
+            reader = PdfReader(os.path.join(PDF_FOLDER, pdf))
+            for i, p in enumerate(reader.pages[:200]):
+                t = p.extract_text()
+                if t and len(t) > 100:
+                    docs.append(t)
+                    srcs.append(f"{pdf} – Page {i+1}")
+    if not docs:
+        return None, [], []
+    emb = embedder.encode(docs)
+    idx = faiss.IndexFlatL2(emb.shape[1])
+    idx.add(np.array(emb))
+    faiss.write_index(idx, INDEX_FILE)
+    pickle.dump({"documents": docs, "sources": srcs}, open(CACHE_FILE, "wb"))
+    return idx, docs, srcs
 
-    st.markdown('<div class="result-box">', unsafe_allow_html=True)
+if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
+    st.session_state.index = faiss.read_index(INDEX_FILE)
+    data = pickle.load(open(CACHE_FILE, "rb"))
+    st.session_state.documents = data["documents"]
+    st.session_state.sources = data["sources"]
+    st.session_state.index_ready = True
 
-    if mode == "Hospital AI":
-        if not st.session_state.index_ready:
-            st.error("❌ Hospital knowledge base not ready. Please upload PDFs and build index.")
-        else:
-            q_emb = embedder.encode([query])
-            index = faiss.read_index(INDEX_FILE)
-            D, I = index.search(np.array(q_emb), 5)
+# ======================================================
+# SIDEBAR
+# ======================================================
+st.sidebar.subheader("📁 Medical Library")
+uploads = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+if uploads:
+    for f in uploads:
+        open(os.path.join(PDF_FOLDER, f.name), "wb").write(f.getbuffer())
+    st.sidebar.success("PDFs uploaded")
 
-            results = [st.session_state.documents[i] for i in I[0]]
-            context = "\n\n".join(results)
+if st.sidebar.button("🔄 Build Index"):
+    st.session_state.index, st.session_state.documents, st.session_state.sources = build_index()
+    st.session_state.index_ready = True
 
-            with st.spinner("🧠 Generating hospital clinical intelligence..."):
-                clinical_answer = hospital_clinical_reasoning(query, context)
-
-            st.subheader("🏥 Hospital Clinical Intelligence")
-            st.write(clinical_answer)
-
-            st.download_button("📥 Download Clinical Report", clinical_answer, file_name="arogyabodha_clinical_report.txt")
-
-            st.subheader("📚 Evidence Sources")
-            for i in I[0]:
-                st.info(st.session_state.sources[i])
-
-    elif mode == "Global AI":
-        with st.spinner("🌍 Searching global medical research..."):
-            ans = external_research_answer(query)
-
-        st.subheader("🌍 Global Medical Research")
-        st.write(ans.get("answer", "No response"))
-
-    elif mode == "Hybrid AI":
-        output = ""
-
-        if st.session_state.index_ready:
-            q_emb = embedder.encode([query])
-            index = faiss.read_index(INDEX_FILE)
-            D, I = index.search(np.array(q_emb), 3)
-
-            hospital_results = [st.session_state.documents[i] for i in I[0]]
-            hospital_context = "\n\n".join(hospital_results)
-
-            hospital_ai = hospital_clinical_reasoning(query, hospital_context)
-            output += "### 🏥 Hospital Clinical Intelligence\n\n" + hospital_ai + "\n\n"
-
-        with st.spinner("🌍 Searching global medical research..."):
-            ext = external_research_answer(query)
-
-        output += "### 🌍 Global Medical Research\n\n" + ext.get("answer", "No response")
-
-        st.subheader("🧠 Hybrid Clinical Decision Intelligence")
-        st.write(output)
-
-        st.download_button("📥 Download Hybrid Report", output, file_name="arogyabodha_hybrid_report.txt")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ================== QUERY HISTORY ==================
 st.sidebar.divider()
 st.sidebar.subheader("🕒 Recent Queries")
-for q in st.session_state.query_history[-5:]:
-    st.sidebar.write("•", q)
+if os.path.exists(ANALYTICS_FILE):
+    logs = json.load(open(ANALYTICS_FILE))
+    for q in logs[-5:][::-1]:
+        st.sidebar.write(f"• {q['query']} ({q['mode']})")
 
-# ================== FOOTER ==================
-st.divider()
-st.caption("ĀROGYABODHA AI © Hospital Clinical Intelligence Platform | Evidence-Based Decision Support")
+# ======================================================
+# QUERY
+# ======================================================
+query = st.text_input("Ask a clinical research question")
+mode = st.radio("AI Mode", ["Hospital AI", "Global AI", "Hybrid AI"], horizontal=True)
+run = st.button("🚀 Analyze")
+
+# ======================================================
+# EXECUTION
+# ======================================================
+if run and query:
+    log_query(query, mode)
+    t1, t2, t3, t4 = st.tabs(["🏥 Hospital", "🌍 Global", "🧪 Outcomes", "📚 Library"])
+
+    if mode in ["Hospital AI", "Hybrid AI"]:
+        qemb = embedder.encode([query])
+        _, I = st.session_state.index.search(np.array(qemb), 5)
+        context = "\n\n".join([st.session_state.documents[i] for i in I[0]])
+        raw = hospital_answer(query, context)
+
+        level, coverage = semantic_evidence_level(raw, context)
+        conf = confidence_score(raw, len(I[0]))
+        srcs = [st.session_state.sources[i] for i in I[0]]
+
+        with t1:
+            st.metric("Confidence", f"{conf}%")
+            st.metric("Evidence Coverage", f"{coverage}%")
+
+            if level == "STRONG":
+                st.success("🟢 Strong hospital evidence")
+                st.write(raw)
+            elif level == "PARTIAL":
+                st.warning("🟡 Partial hospital evidence — interpret cautiously")
+                st.write(raw)
+            else:
+                st.error("🔴 No sufficient hospital evidence")
+                st.write("Insufficient hospital evidence available.")
+
+            for s in srcs:
+                st.info(s)
+
+            st.download_button(
+                "📥 Download Report",
+                generate_report(query, mode, raw, conf, coverage, srcs),
+                file_name="arogyabodha_report.txt"
+            )
+
+        with t3:
+            df = extract_outcomes(raw)
+            if not df.empty:
+                st.table(df)
+
+    if mode in ["Global AI", "Hybrid AI"]:
+        with t2:
+            st.write(external_research_answer(query).get("answer", ""))
+
+    with t4:
+        for pdf in os.listdir(PDF_FOLDER):
+            if pdf.endswith(".pdf"):
+                c1, c2 = st.columns([8,1])
+                with c1:
+                    st.write("📄", pdf)
+                with c2:
+                    if st.button("🗑️", key=pdf):
+                        os.remove(os.path.join(PDF_FOLDER, pdf))
+                        if os.path.exists(INDEX_FILE): os.remove(INDEX_FILE)
+                        if os.path.exists(CACHE_FILE): os.remove(CACHE_FILE)
+                        st.session_state.index_ready = False
+                        st.experimental_rerun()
+
+# ======================================================
+# FOOTER
+# ======================================================
+st.caption("ĀROGYABODHA AI © FINAL • Evidence-Locked • Clinically Safe")
