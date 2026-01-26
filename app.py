@@ -8,15 +8,11 @@ from pypdf import PdfReader
 from external_research import external_research_answer
 
 # ======================================================
-# PAGE CONFIG
+# CONFIG
 # ======================================================
 st.set_page_config("ĀROGYABODHA AI — Clinical Research Copilot","🧠",layout="wide")
-
 st.info("ℹ️ Clinical research support only. Not for diagnosis.")
 
-# ======================================================
-# STORAGE
-# ======================================================
 PDF_FOLDER="medical_library"
 VECTOR_FOLDER="vector_cache"
 INDEX_FILE=f"{VECTOR_FOLDER}/index.faiss"
@@ -30,39 +26,27 @@ os.makedirs(VECTOR_FOLDER,exist_ok=True)
 # ======================================================
 # SESSION
 # ======================================================
-defaults={
-    "index":None,"documents":[],"sources":[],
-    "index_ready":False,"show_help":False,"role":"Doctor"
-}
-for k,v in defaults.items():
+for k,v in {
+    "index":None,
+    "documents":[],
+    "sources":[],
+    "index_ready":False,
+    "role":"Doctor"
+}.items():
     st.session_state.setdefault(k,v)
 
 # ======================================================
 # HEADER
 # ======================================================
-c1,c2,c3=st.columns([6,1,1])
+c1,c2=st.columns([6,1])
 with c1:
     st.markdown("## 🧠 ĀROGYABODHA AI")
-    st.caption("Evidence-Locked Clinical Intelligence")
+    st.caption("Evidence-Locked Clinical Research Copilot")
 with c2:
-    if st.button("❓ Help"):
-        st.session_state.show_help=not st.session_state.show_help
-with c3:
     st.session_state.role=st.selectbox("Role",["Doctor","Researcher"])
 
 # ======================================================
-# HELP PANEL
-# ======================================================
-if st.session_state.show_help:
-    st.markdown("""
-**Hospital AI** – Uses only uploaded PDFs  
-**Global AI** – Uses external research  
-**Hybrid AI** – Compares both  
-Strong evidence = green | Partial = yellow | None = red
-""")
-
-# ======================================================
-# MODEL
+# EMBEDDINGS
 # ======================================================
 @st.cache_resource
 def load_embedder():
@@ -71,19 +55,19 @@ def load_embedder():
 embedder=load_embedder()
 
 # ======================================================
-# FDA
+# FDA DB
 # ======================================================
 if not os.path.exists(FDA_DB):
     json.dump({
         "temozolomide":"FDA Approved",
         "bevacizumab":"FDA Approved",
-        "car-t":"Experimental"
+        "car-t":"Experimental / Trial"
     },open(FDA_DB,"w"))
 
 FDA_REGISTRY=json.load(open(FDA_DB))
 
 # ======================================================
-# HELPERS
+# UTILITIES
 # ======================================================
 def log_query(q,m):
     logs=[]
@@ -117,15 +101,25 @@ def extract_outcomes(text):
         for d,s in FDA_REGISTRY.items() if d in text.lower()
     ])
 
+def hospital_answer(q,ctx):
+    prompt=f"Use ONLY hospital evidence:\n{ctx}\nQuestion:{q}"
+    return external_research_answer(prompt).get("answer","")
+
 def generate_report(q,m,a,c,cv,s):
-    r=f"Query:{q}\nMode:{m}\nConfidence:{c}%\nCoverage:{cv}%\n\n{a}\n\nSources:\n"
+    r=f"""Clinical Research Report
+-------------------------
+Query: {q}
+Mode: {m}
+Confidence: {c}%
+Evidence Match: {cv}%
+
+Answer:
+{a}
+
+Sources:
+"""
     for x in s: r+=f"- {x}\n"
     return r
-
-def hospital_answer(q,ctx):
-    return external_research_answer(
-        f"Use only hospital evidence:\n{ctx}\nQuestion:{q}"
-    ).get("answer","")
 
 # ======================================================
 # BUILD INDEX
@@ -134,13 +128,15 @@ def build_index():
     docs,srcs=[],[]
     for pdf in os.listdir(PDF_FOLDER):
         if pdf.endswith(".pdf"):
-            r=PdfReader(os.path.join(PDF_FOLDER,pdf))
-            for i,p in enumerate(r.pages):
+            reader=PdfReader(os.path.join(PDF_FOLDER,pdf))
+            for i,p in enumerate(reader.pages):
                 t=p.extract_text()
                 if t and len(t)>100:
                     docs.append(t)
                     srcs.append(f"{pdf} – Page {i+1}")
-    if not docs: return None,[],[]
+
+    if not docs:
+        return None,[],[]
 
     emb=embedder.encode(docs).astype("float32")
     idx=faiss.IndexFlatL2(emb.shape[1])
@@ -152,7 +148,7 @@ def build_index():
     return idx,docs,srcs
 
 # ======================================================
-# LOAD
+# LOAD CACHE
 # ======================================================
 if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
     st.session_state.index=faiss.read_index(INDEX_FILE)
@@ -164,13 +160,13 @@ if os.path.exists(INDEX_FILE) and not st.session_state.index_ready:
 # ======================================================
 # SIDEBAR
 # ======================================================
-st.sidebar.subheader("📁 Medical Library")
+st.sidebar.subheader("📁 Medical Evidence Library")
 
 uploads=st.sidebar.file_uploader("Upload PDFs",type=["pdf"],accept_multiple_files=True)
 if uploads:
     for f in uploads:
         open(os.path.join(PDF_FOLDER,f.name),"wb").write(f.getbuffer())
-    st.sidebar.success("Uploaded")
+    st.sidebar.success("PDFs uploaded")
 
 if st.sidebar.button("🔄 Build Index"):
     st.session_state.index,st.session_state.documents,st.session_state.sources=build_index()
@@ -185,10 +181,15 @@ if os.path.exists(ANALYTICS_FILE):
 # ======================================================
 # QUERY
 # ======================================================
-query=st.text_input("Ask clinical question")
-mode=st.radio("Mode",["Hospital AI","Global AI","Hybrid AI"],horizontal=True)
+query=st.text_input("Ask clinical research question")
+mode=st.radio("AI Mode",["Hospital AI","Global AI","Hybrid AI"],horizontal=True)
 
 if st.button("🚀 Analyze") and query:
+
+    if not st.session_state.index_ready:
+        st.warning("Upload PDFs and build index first")
+        st.stop()
+
     log_query(query,mode)
 
     t1,t2,t3,t4=st.tabs(["🏥 Hospital","🌍 Global","🧪 Outcomes","📚 Library"])
@@ -199,6 +200,7 @@ if st.button("🚀 Analyze") and query:
 
         chunks=[st.session_state.documents[i] for i in I[0]]
         context="\n\n".join(chunks)
+
         raw=hospital_answer(query,context)
 
         level,coverage=semantic_evidence_level(raw,chunks)
@@ -207,25 +209,25 @@ if st.button("🚀 Analyze") and query:
 
         with t1:
             st.metric("Confidence",f"{conf}%")
-            st.metric("Evidence Coverage",f"{coverage}%")
+            st.metric("Evidence Match",f"{coverage}%")
 
             if level=="STRONG": st.success("Strong hospital evidence")
             elif level=="PARTIAL": st.warning("Partial hospital evidence")
             else: st.error("No sufficient hospital evidence")
 
             st.write(raw)
-
             for s in srcs: st.info(s)
 
             st.download_button(
                 "📥 Download Report",
                 generate_report(query,mode,raw,conf,coverage,srcs),
-                file_name="arogyabodha_report.txt"
+                file_name="clinical_report.txt"
             )
 
         with t3:
             df=extract_outcomes(raw)
-            if not df.empty: st.table(df)
+            if not df.empty:
+                st.table(df)
 
     if mode in ["Global AI","Hybrid AI"]:
         with t2:
@@ -247,4 +249,4 @@ if st.button("🚀 Analyze") and query:
 # ======================================================
 # FOOTER
 # ======================================================
-st.caption("ĀROGYABODHA AI • Evidence-Locked Clinical AI")
+st.caption("ĀROGYABODHA AI • Evidence-Locked Clinical Research Intelligence")
